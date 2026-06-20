@@ -1,6 +1,6 @@
 """
 apisec/agent.py
-The brain. Discovers endpoints, runs Claude agent loop,
+The brain. Discovers endpoints, runs LLM agent loop (Groq or Claude),
 collects findings. Uses identity.py for auth and knowledge.py for context.
 """
 
@@ -13,6 +13,7 @@ from xml.etree import ElementTree as ET
 
 import httpx
 from bs4 import BeautifulSoup
+
 from .identity  import Identity
 from .knowledge import context_for_scan
 from .llm       import LLM
