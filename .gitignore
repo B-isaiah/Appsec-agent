@@ -1,0 +1,9 @@
+knowledge.db
+findings.json
+__pycache__/
+*.pyc
+.env
+*.xml
+*.json
+!requirements.txt
+venv/
