@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-run.py — APISec Agent
+run.py -- APISec Agent
 The ONLY file you run. Everything else is internal.
 Bee / EdiongTechnologies
 
@@ -10,7 +10,7 @@ SCANNING
 # Basic scan (auto-discovers endpoints)
 python3 run.py scan https://target.com
 
-# With Burp export (real observed traffic — best results)
+# With Burp export (real observed traffic -- best results)
 python3 run.py scan https://target.com --burp traffic.xml
 
 # With attacker + victim accounts (full IDOR testing)
@@ -18,7 +18,7 @@ python3 run.py scan https://target.com \
   --attacker-burp attacker.xml \
   --victim-burp   victim.xml
 
-# Manual auth (paste headers directly — any format)
+# Manual auth (paste headers directly -- any format)
 python3 run.py scan https://target.com \
   --attacker-headers "Authorization: Bearer eyJ...
 X-CSRF-Token: abc123
@@ -56,7 +56,7 @@ import os
 import json
 import argparse
 
-# Colour helpers (no imports needed — just ANSI)
+# Colour helpers (no imports needed -- just ANSI)
 R  = "\033[91m"
 Y  = "\033[93m"
 G  = "\033[92m"
@@ -71,16 +71,8 @@ def _sev(s):
     }.get(s, RS)
 
 def banner():
-    print(f"""
-{CY}{B}
- █████╗ ██████╗ ██╗███████╗███████╗ ██████╗
-██╔══██╗██╔══██╗██║██╔════╝██╔════╝██╔════╝
-███████║██████╔╝██║███████╗█████╗  ██║
-██╔══██║██╔═══╝ ██║╚════██║██╔══╝  ██║
-██║  ██║██║     ██║███████║███████╗╚██████╗
-╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝ ╚═════╝
-{RS}{D}  OWASP API Top 10 Agent — Bee / EdiongTechnologies{RS}
-""")
+    print(f"{CY}{B}  APISec  --  OWASP API Top 10 Agent{RS}")
+    print(f"{D}  Bee / EdiongTechnologies{RS}\n")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -91,37 +83,78 @@ def cmd_scan(args):
     import urllib3; urllib3.disable_warnings()
 
     from apisec.identity import build as build_identity
-    from apisec         import agent
+    from apisec         import agent, knowledge as kb
+    from apisec.recon   import discover as recon_discover
+    from apisec.login   import browser_login
 
     base_url = args.url.rstrip("/")
     if not urlparse(base_url).scheme:
         print(f"{R}Error: include https:// in the URL{RS}"); sys.exit(1)
 
+    # Ingest knowledge before scan if --learn-url or --learn-text provided
+    if args.learn_url:
+        print(f"\n{B}[LEARN BEFORE SCAN]{RS} {args.learn_url}")
+        try:
+            r = kb.add_url(args.learn_url)
+            if r["status"] == "ok":
+                print(f"  {G}v{RS} {r['message']}")
+            else:
+                print(f"  {Y}!{RS} {r['message']}")
+        except Exception as e:
+            print(f"  {R}X Failed: {e}{RS}")
+
+    if args.learn_text:
+        print(f"\n{B}[LEARN BEFORE SCAN]{RS} Ingesting text...")
+        r = kb.add_text(args.learn_text, title=args.learn_title or "Pre-scan note")
+        print(f"  {G}v{RS} {r['message']}")
+
+    # -- RECONNAISSANCE --
+    recon_report = recon_discover(base_url)
     print(f"{B}Target:{RS}  {base_url}")
+
+    # -- IDENTITY SETUP --
     print(f"\n{B}[IDENTITY SETUP]{RS}")
 
-    # Build attacker identity (Burp base + manual override)
-    attacker = build_identity(
-        label    = "attacker",
-        burp_path= args.attacker_burp or args.burp,
-        base_url = base_url,
-        manual   = args.attacker_headers,
-    )
+    # Browser login (alternative to Burp -- just needs creds)
+    if args.login:
+        print(f"  Using browser login instead of Burp XML")
+        attacker = browser_login(
+            login_url  = args.login,
+            username   = args.login_user or "admin@test.com",
+            password   = args.login_pass or "password",
+            otp        = args.login_otp,
+        )
+        # Browser login covers attacker. Victim is still from Burp/manual if provided.
+        victim = build_identity(
+            label    = "victim",
+            burp_path= args.victim_burp,
+            base_url = base_url,
+            manual   = args.victim_headers,
+        )
+    else:
+        # Build attacker identity (Burp base + manual override)
+        attacker = build_identity(
+            label    = "attacker",
+            burp_path= args.attacker_burp or args.burp,
+            base_url = base_url,
+            manual   = args.attacker_headers,
+        )
 
-    # Build victim identity
-    victim = build_identity(
-        label    = "victim",
-        burp_path= args.victim_burp,
-        base_url = base_url,
-        manual   = args.victim_headers,
-    )
+        # Build victim identity
+        victim = build_identity(
+            label    = "victim",
+            burp_path= args.victim_burp,
+            base_url = base_url,
+            manual   = args.victim_headers,
+        )
 
-    # Collect endpoints from all sources
+    # Collect endpoints from all sources (recon endpoints included)
     eps = agent.collect_endpoints(
         base_url  = base_url,
         burp_path = args.burp,
         spec_path = args.spec,
         attacker  = attacker if attacker.is_authenticated() else None,
+        recon_eps = recon_report.get("endpoints", []) if recon_report else None,
     )
 
     if not eps:
@@ -133,18 +166,19 @@ def cmd_scan(args):
     if victim.is_authenticated():
         victim_ctx = agent.harvest_victim_ids(eps, victim, base_url)
 
-    # Load knowledge base context + run agent
+    # Load knowledge base context + run agent with recon context
     print(f"\n{B}[KNOWLEDGE BASE]{RS}")
-    agent.run(base_url, eps, attacker, victim, victim_ctx, provider=args.model)
+    agent.run(base_url, eps, attacker, victim, victim_ctx,
+              provider=args.model, recon_report=recon_report)
 
     # Print final report
-    _print_report(base_url, agent.findings, agent.operations, agent._op_n)
+    _print_report(base_url, agent.findings, agent.operations, agent._op_n, recon_report)
 
 
-def _print_report(base_url, findings, operations, total_ops):
-    print(f"\n{'═'*66}")
-    print(f"{B}  REPORT — {base_url}{RS}")
-    print(f"{'═'*66}")
+def _print_report(base_url, findings, operations, total_ops, recon_report=None):
+    print(f"\n{'='*66}")
+    print(f"{B}  REPORT -- {base_url}{RS}")
+    print(f"{'='*66}")
     print(f"  Total probes : {total_ops}")
     print(f"  Findings     : {len(findings)}")
 
@@ -157,20 +191,101 @@ def _print_report(base_url, findings, operations, total_ops):
             bucket = [f for f in findings if f["severity"]==sev]
             if not bucket: continue
             col = _sev(sev)
-            print(f"{col}  ── {sev} ({len(bucket)}) ──{RS}")
+            print(f"{col}  -- {sev} ({len(bucket)}) --{RS}")
             for f in bucket:
-                print(f"  {col}●{RS} {f['title']}")
+                print(f"  {col}*{RS} {f['title']}")
                 print(f"    {D}{f['owasp']}{RS}")
                 print(f"    {f['description'][:120]}")
                 print(f"    Fix: {f['remediation'][:100]}")
                 print(f"    Proof ops: {', '.join(f['op_ids'])}")
                 print()
 
+    _print_recommendations(findings, recon_report)
+
     out = "findings.json"
     with open(out,"w") as fh:
         json.dump({"target":base_url,"findings":findings,"operations":operations},fh,indent=2)
-    print(f"  {CY}Evidence saved → {out}{RS}")
+    print(f"  {CY}Evidence saved -> {out}{RS}")
     print(f"  {D}Each op_id has the full request + response. Verify manually before reporting.{RS}\n")
+
+
+def _print_recommendations(findings, recon_report=None):
+    """Generate actionable next steps based on findings."""
+    tips = []
+
+    owasp_map = {
+        "API1": "BOLA/IDOR",
+        "API2": "Broken Auth",
+        "API3": "Mass Assignment",
+        "API4": "Resource Exhaustion",
+        "API5": "Function Auth",
+        "API6": "Business Logic",
+        "API7": "SSRF",
+        "API8": "Misconfiguration",
+        "API9": "Inventory",
+        "API10": "Unsafe Consumption",
+    }
+
+    severity_order = {"CRITICAL":0, "HIGH":1, "MEDIUM":2, "LOW":3, "INFO":4}
+    findings_sorted = sorted(findings, key=lambda f: severity_order.get(f.get("severity","INFO"), 9))
+
+    for f in findings_sorted:
+        sev = f.get("severity", "INFO")
+        title = f.get("title", "")
+        owasp = f.get("owasp", "")
+        desc = f.get("description", "")
+        remediation = f.get("remediation", "")
+
+        cat = ""
+        for code, name in owasp_map.items():
+            if code in owasp:
+                cat = name
+                break
+
+        if sev in ("CRITICAL", "HIGH"):
+            if "IDOR" in title or "BOLA" in title or "access" in title.lower():
+                tips.append(f"[{sev}] {title} -- Check if other users' data is accessible via the same pattern. Test sequential IDs.")
+            if "auth" in title.lower() or "bypass" in title.lower():
+                tips.append(f"[{sev}] {title} -- Try horizontal escalation with other known users. Check if rate limiting is missing.")
+            if "mass" in title.lower() or "assignment" in title.lower():
+                tips.append(f"[{sev}] {title} -- Look for other endpoints that accept similar input structures. Test isAdmin/role fields.")
+
+        if "exposed" in title.lower() or "leak" in title.lower():
+            tips.append(f"[{sev}] {title} -- Verify if exposed data contains actionable credentials. Try against other endpoints.")
+
+        if remediation:
+            tips.append(f"[ACTION] {remediation[:120]}")
+
+    if recon_report:
+        gql = recon_report.get("graphql")
+        if gql and gql.get("is_graphql") and not any("graphql" in str(f).lower() for f in findings):
+            tips.append("[INFO] GraphQL endpoint found but not tested by agent. Run again with --model claude for better coverage.")
+        if gql and gql.get("introspection") and not any("introspection" in str(f).lower() for f in findings):
+            tips.append("[MEDIUM] GraphQL introspection is open. Report this as an information disclosure.")
+        subs = recon_report.get("subdomains", [])
+        if subs:
+            tips.append(f"[INFO] {len(subs)} subdomains found. Extend the scan: python run.py scan https://<subdomain>")
+
+    if not tips:
+        tips.append("[INFO] No specific findings to act on. Try with --attacker-burp and --victim-burp for IDOR coverage.")
+    else:
+        # Deduplicate
+        seen = set()
+        unique = []
+        for t in tips:
+            if t not in seen:
+                seen.add(t)
+                unique.append(t)
+        tips = unique
+
+    print(f"\n{D}{'='*66}{RS}")
+    print(f"{B}{Y}  RECOMMENDED NEXT STEPS{RS}")
+    print(f"{D}{'='*66}{RS}")
+    for t in tips[:15]:
+        print(f"  >{RS} {t}")
+    if len(tips) > 15:
+        print(f"  {D}... and {len(tips)-15} more suggestions{RS}")
+    print()
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -182,7 +297,7 @@ def cmd_learn(args):
     if args.text:
         print(f"\n{B}[LEARN]{RS} Ingesting text...")
         r = kb.add_text(args.text, title=args.title or "Manual note")
-        print(f"  {G}✓{RS} {r['message']}")
+        print(f"  {G}v{RS} {r['message']}")
         if r.get("tags"):
             print(f"  Tags: {', '.join(r['tags'])}")
         return
@@ -194,13 +309,13 @@ def cmd_learn(args):
     try:
         r = kb.add_url(args.source)
         if r["status"] == "ok":
-            print(f"  {G}✓{RS} {r['message']}")
+            print(f"  {G}v{RS} {r['message']}")
             if r.get("tags"):
                 print(f"  Tags: {', '.join(r['tags'])}")
         else:
-            print(f"  {Y}⚠{RS} {r['message']}")
+            print(f"  {Y}!{RS} {r['message']}")
     except Exception as e:
-        print(f"  {R}✗ Failed: {e}{RS}")
+        print(f"  {R}X Failed: {e}{RS}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -215,7 +330,7 @@ def cmd_kb(args):
             print(f"\n  {Y}Knowledge base is empty.{RS}")
             print(f"  Add resources: python3 run.py learn https://url.com")
             return
-        print(f"\n{B}Knowledge Base — {len(sources)} sources{RS}\n")
+        print(f"\n{B}Knowledge Base -- {len(sources)} sources{RS}\n")
         for s in sources:
             print(f"  {CY}[{s['id']}]{RS} {s['title'][:65]}")
             print(f"       {D}{s['source_type']} | {s['chunks']} chunks | {s['added_at'][:10]}{RS}")
@@ -249,7 +364,7 @@ def cmd_kb(args):
         if not args.id:
             print(f"{R}Provide --id{RS}"); sys.exit(1)
         kb.delete(args.id)
-        print(f"  {G}✓ Deleted source {args.id}{RS}")
+        print(f"  {G}v Deleted source {args.id}{RS}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -260,12 +375,12 @@ def main():
 
     p = argparse.ArgumentParser(
         prog="run.py",
-        description="APISec — OWASP API Top 10 Agent",
+        description="APISec -- OWASP API Top 10 Agent",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = p.add_subparsers(dest="command")
 
-    # ── scan ──
+    # -- scan --
     sc = sub.add_parser("scan", help="Scan a target for API vulnerabilities")
     sc.add_argument("url",                  help="Target base URL e.g. https://api.target.com")
     sc.add_argument("--burp",               help="Burp XML export (endpoint discovery + traffic)", default=None)
@@ -277,17 +392,24 @@ def main():
                     default=None)
     sc.add_argument("--victim-headers",     help="Victim auth headers (same formats)", default=None)
     sc.add_argument("--spec",               help="OpenAPI/Swagger JSON spec file", default=None)
+    sc.add_argument("--learn-url",   help="Ingest a URL (blog, writeup, video) before scanning", default=None)
+    sc.add_argument("--learn-text",  help="Ingest raw text/notes before scanning", default=None)
+    sc.add_argument("--learn-title", help="Title for --learn-text entries", default=None)
+    sc.add_argument("--login",        help="Browser login URL (alternative to Burp XML)", default=None)
+    sc.add_argument("--login-user",   help="Username for browser login", default=None)
+    sc.add_argument("--login-pass",   help="Password for browser login", default=None)
+    sc.add_argument("--login-otp",    help="OTP/2FA code for browser login", default=None)
     sc.add_argument("--model",
                     help="LLM provider to use (default: groq). Options: groq, claude",
                     default="groq", choices=["groq","claude"])
 
-    # ── learn ──
+    # -- learn --
     lc = sub.add_parser("learn", help="Add knowledge to the knowledge base")
     lc.add_argument("source",  nargs="?",   help="URL to ingest (blog, YouTube, LinkedIn, any)")
     lc.add_argument("--text",               help="Raw text or notes to ingest", default=None)
     lc.add_argument("--title",              help="Title for --text entries", default=None)
 
-    # ── kb ──
+    # -- kb --
     kc = sub.add_parser("kb", help="Manage the knowledge base")
     kb_sub = kc.add_subparsers(dest="kb_cmd")
     kb_sub.add_parser("list",   help="List all sources")

@@ -24,12 +24,12 @@ except ImportError:
     YOUTUBE_OK = False
 
 
-# ── Config ────────────────────────────────────────────────────────
+# -- Config --------------------------------------------------------
 DB_PATH    = os.path.join(os.path.dirname(__file__), "knowledge.db")
 CHUNK_SIZE = 800
 OVERLAP    = 100
 
-# ── Security topic detector ───────────────────────────────────────
+# -- Security topic detector ---------------------------------------
 TOPICS = {
     "BOLA/IDOR":        r'\b(idor|bola|object.level|insecure.direct|broken.object)\b',
     "Auth":             r'\b(auth|jwt|token|bearer|session|cookie|login|oauth|saml|sso)\b',
@@ -50,7 +50,7 @@ def _tags(text: str) -> list[str]:
     return [t for t, p in TOPICS.items() if re.search(p, tl, re.I)]
 
 
-# ── Database ──────────────────────────────────────────────────────
+# -- Database ------------------------------------------------------
 def _db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -79,7 +79,7 @@ def _chunk(text: str) -> list[str]:
     return out
 
 
-# ── Extractors ────────────────────────────────────────────────────
+# -- Extractors ----------------------------------------------------
 def _youtube(url: str) -> tuple[str, str]:
     if not YOUTUBE_OK:
         raise RuntimeError("pip install youtube-transcript-api")
@@ -128,7 +128,7 @@ def _source_type(url: str) -> str:
     return "web"
 
 
-# ── Public API ────────────────────────────────────────────────────
+# -- Public API ----------------------------------------------------
 def add_url(url: str) -> dict:
     """Ingest any URL. Auto-detects YouTube, blog posts, LinkedIn."""
     st = _source_type(url)
@@ -162,7 +162,7 @@ def _store(url, title, source_type, text) -> dict:
                    (sid, i, c, ",".join(t)))
     db.commit(); db.close()
     return {"status":"ok","title":title,"chunks":len(chunks),
-            "tags":list(all_tags),"message":f"Ingested '{title}' → {len(chunks)} chunks"}
+            "tags":list(all_tags),"message":f"Ingested '{title}' -> {len(chunks)} chunks"}
 
 
 def search(query: str, top_k: int = 5) -> list[dict]:
@@ -214,7 +214,7 @@ def context_for_scan(target_host: str, auth_type: str) -> str:
                 seen.add(key)
                 src = f"[{r['source_type'].upper()}] {r['title']}"
                 if r.get("url"):
-                    src += f" — {r['url'][:60]}"
+                    src += f" -- {r['url'][:60]}"
                 parts.append(f"### {src}\n{r['text']}")
 
     return "\n\n".join(parts) if parts else ""

@@ -2,7 +2,7 @@
 apisec/identity.py
 Handles ALL forms of authentication:
 JWT Bearer, cookies, CSRF tokens, API keys, .NET Core sessions,
-Basic auth, client credentials, custom headers — anything.
+Basic auth, client credentials, custom headers -- anything.
 
 Extracts automatically from Burp XML, or accepts manual paste.
 """
@@ -14,8 +14,10 @@ from urllib.parse import urlparse
 from typing import Optional
 from xml.etree import ElementTree as ET
 
+from .term import CHECK, CROSS, ELLIPS
 
-# ── Known auth-bearing header names ──────────────────────────────
+
+# -- Known auth-bearing header names ------------------------------
 AUTH_HEADERS = {
     "authorization", "x-api-key", "api-key", "x-auth-token",
     "x-access-token", "x-csrf-token", "x-xsrf-token",
@@ -25,7 +27,7 @@ AUTH_HEADERS = {
     "x-amz-security-token", "x-amz-date",
 }
 
-# ── Known auth-bearing cookie names ──────────────────────────────
+# -- Known auth-bearing cookie names ------------------------------
 AUTH_COOKIES = {
     ".aspnetcore.antiforgery", ".aspnetcore.session",
     ".aspnetcore.identity", "aspnet.applicationcookie",
@@ -35,7 +37,7 @@ AUTH_COOKIES = {
     "csrf_token", "xsrf-token",
 }
 
-# ── Headers that are never auth-related ──────────────────────────
+# -- Headers that are never auth-related --------------------------
 SKIP_HEADERS = {
     "host", "content-type", "accept", "user-agent",
     "accept-encoding", "accept-language", "connection",
@@ -250,11 +252,11 @@ def build(
             identity.auth_type = _detect_auth_type(identity.headers, identity.cookies)
 
     # Print what we found
-    tag = "✓" if identity.is_authenticated() else "✗"
+    tag = CHECK if identity.is_authenticated() else CROSS
     print(f"  {tag} {label.upper():8} {identity.auth_type}")
     for k, v in identity.headers.items():
-        print(f"           header  {k}: {v[:55]}{'…' if len(v) > 55 else ''}")
+        print(f"           header  {k}: {v[:55]}{'...' if len(v) > 55 else ''}")
     for k, v in identity.cookies.items():
-        print(f"           cookie  {k}={v[:40]}{'…' if len(v) > 40 else ''}")
+        print(f"           cookie  {k}={v[:40]}{'...' if len(v) > 40 else ''}")
 
     return identity

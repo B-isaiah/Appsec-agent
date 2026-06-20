@@ -1,15 +1,15 @@
 """
 apisec/llm.py
 Unified LLM adapter. Supports Claude (Anthropic) and Groq.
-The rest of the agent never touches the API directly — it calls this.
+The rest of the agent never touches the API directly -- it calls this.
 
 Usage:
     from apisec.llm import LLM
     llm = LLM(provider="groq")     # or "claude"
     response = llm.chat(system=..., messages=..., tools=...)
-    # response.text      — assistant text
-    # response.tool_calls — list of {name, id, input}
-    # response.done      — True if no more tool calls
+    # response.text      -- assistant text
+    # response.tool_calls -- list of {name, id, input}
+    # response.done      -- True if no more tool calls
 """
 
 import os
@@ -17,7 +17,7 @@ import json
 from typing import Optional
 
 
-# ── Unified response object ───────────────────────────────────────
+# -- Unified response object ---------------------------------------
 class LLMResponse:
     def __init__(self, text: str, tool_calls: list, done: bool, raw=None):
         self.text        = text
@@ -26,7 +26,7 @@ class LLMResponse:
         self.raw         = raw          # original SDK response
 
 
-# ── Provider: Anthropic (Claude) ─────────────────────────────────
+# -- Provider: Anthropic (Claude) ---------------------------------
 class _ClaudeBackend:
     MODEL = "claude-sonnet-4-6"
 
@@ -81,7 +81,7 @@ class _ClaudeBackend:
         }
 
 
-# ── Provider: Groq ────────────────────────────────────────────────
+# -- Provider: Groq ------------------------------------------------
 class _GroqBackend:
     # llama-3.3-70b has the best tool-calling on Groq
     MODEL = "llama-3.3-70b-versatile"
@@ -106,7 +106,7 @@ class _GroqBackend:
 
     def _convert_tools(self, tools: list) -> list:
         """
-        Convert Anthropic tool schema → OpenAI/Groq tool schema.
+        Convert Anthropic tool schema -> OpenAI/Groq tool schema.
         Anthropic: {name, description, input_schema}
         Groq:      {type:"function", function:{name, description, parameters}}
         """
@@ -148,7 +148,7 @@ class _GroqBackend:
                         })
                     continue
 
-                # Assistant content blocks — extract text + tool calls
+                # Assistant content blocks -- extract text + tool calls
                 text_parts = []
                 tool_calls = []
                 for block in content:
@@ -184,7 +184,12 @@ class _GroqBackend:
                 out.append(groq_msg)
             else:
                 # Plain string content
-                out.append({"role": role, "content": content})
+                entry = {"role": role, "content": content}
+                if msg.get("tool_calls"):
+                    entry["tool_calls"] = msg["tool_calls"]
+                if msg.get("tool_call_id"):
+                    entry["tool_call_id"] = msg["tool_call_id"]
+                out.append(entry)
 
         return out
 
@@ -238,7 +243,7 @@ class _GroqBackend:
         return assistant
 
     def build_tool_result_msg(self, tool_results: list):
-        """tool_results = [{tool_use_id, content}] → list of tool messages"""
+        """tool_results = [{tool_use_id, content}] -> list of tool messages"""
         # Groq needs separate message per tool result
         return [
             {
@@ -250,7 +255,7 @@ class _GroqBackend:
         ]
 
 
-# ── Public LLM class ──────────────────────────────────────────────
+# -- Public LLM class ----------------------------------------------
 PROVIDERS = {
     "claude": _ClaudeBackend,
     "groq":   _GroqBackend,
@@ -259,7 +264,7 @@ PROVIDERS = {
 class LLM:
     """
     Single interface for all providers.
-    agent.py uses this exclusively — never touches Anthropic/Groq SDK directly.
+    agent.py uses this exclusively -- never touches Anthropic/Groq SDK directly.
     """
     def __init__(self, provider: str = "groq"):
         provider = provider.lower()

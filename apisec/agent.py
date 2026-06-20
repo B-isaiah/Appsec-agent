@@ -14,12 +14,14 @@ from xml.etree import ElementTree as ET
 import httpx
 from bs4 import BeautifulSoup
 
+from .graphql   import format_schema_context, attack_guide as gql_attack_guide
 from .identity  import Identity
 from .knowledge import context_for_scan
 from .llm       import LLM
+from .term      import CHECK, CROSS, FLAG, ARROW, BULLET
 
 
-# ── Terminal colours ──────────────────────────────────────────────
+# -- Terminal colours ----------------------------------------------
 class C:
     RED    = "\033[91m"
     YELLOW = "\033[93m"
@@ -34,7 +36,7 @@ def _sc(s):
             "MEDIUM":C.YELLOW,"LOW":C.GREEN,"INFO":C.CYAN}.get(s, C.RESET)
 
 
-# ── Operation log (replay system) ────────────────────────────────
+# -- Operation log (replay system) --------------------------------
 operations : dict = {}
 findings   : list = []
 _op_n = 0
@@ -49,7 +51,7 @@ def _log(method, url, body, status, resp, label):
     return oid
 
 
-# ── Common paths for auto-discovery ──────────────────────────────
+# -- Common paths for auto-discovery ------------------------------
 COMMON = [
     "/api","/api/v1","/api/v2","/api/v3","/v1","/v2","/v3",
     "/swagger.json","/swagger/v1/swagger.json","/openapi.json",
@@ -69,7 +71,7 @@ COMMON = [
 ]
 
 
-# ── Endpoint collection ───────────────────────────────────────────
+# -- Endpoint collection -------------------------------------------
 def _base_hdrs(origin: str) -> dict:
     return {"User-Agent":"Mozilla/5.0","Accept":"application/json, */*",
             "Content-Type":"application/json","Origin":origin}
@@ -80,6 +82,7 @@ def collect_endpoints(
     burp_path  : Optional[str]     = None,
     spec_path  : Optional[str]     = None,
     attacker   : Optional[Identity] = None,
+    recon_eps  : Optional[list]    = None,
 ) -> list[dict]:
     eps, seen = [], set()
 
@@ -89,6 +92,11 @@ def collect_endpoints(
             seen.add(k)
             eps.append({"method":method,"url":url,"body":body,
                         "source":source,"description":desc})
+
+    # Recon endpoints (pre-discovery)
+    if recon_eps:
+        for u in recon_eps:
+            _add("GET", u, source="recon", desc="Recon discovered")
 
     # Burp XML
     if burp_path:
@@ -122,7 +130,7 @@ def collect_endpoints(
                 except Exception: continue
         except Exception as e:
             print(f"  {C.RED}Burp parse error: {e}{C.RESET}")
-        print(f"  {C.CYAN}→ {len(eps)} from Burp{C.RESET}")
+        print(f"  {C.CYAN}{ARROW} {len(eps)} from Burp{C.RESET}")
 
     # OpenAPI spec
     if spec_path:
@@ -138,7 +146,7 @@ def collect_endpoints(
                              source="openapi", desc=d.get("summary",""))
         except Exception as e:
             print(f"  {C.RED}Spec error: {e}{C.RESET}")
-        print(f"  {C.CYAN}→ {len(eps)-n_before} from spec{C.RESET}")
+        print(f"  {C.CYAN}{ARROW} {len(eps)-n_before} from spec{C.RESET}")
 
     # Auto-discovery
     print(f"\n{C.BOLD}[DISCOVERY]{C.RESET} Probing {base_url}...")
@@ -181,7 +189,7 @@ def collect_endpoints(
                 except: pass
         except: pass
 
-    print(f"  {C.CYAN}→ {len(eps)-n_before} from discovery{C.RESET}")
+        print(f"  {C.CYAN}{ARROW} {len(eps)-n_before} from discovery{C.RESET}")
     print(f"\n{C.BOLD}Total endpoints:{C.RESET} {len(eps)}")
     return eps
 
@@ -217,15 +225,15 @@ def harvest_victim_ids(
                     for k in ("id","userId","user_id","_id","accountId","uuid"):
                         if k in data:
                             ctx["victim_ids"][k] = data[k]
-                            print(f"  {C.GREEN}✓ victim.{k} = {data[k]}{C.RESET}")
+                            print(f"  {C.GREEN}{CHECK} victim.{k} = {data[k]}{C.RESET}")
                     break
             except: pass
     if not ctx["victim_ids"]:
-        print(f"  {C.DIM}No IDs found — agent will use sequential guessing{C.RESET}")
+        print(f"  {C.DIM}No IDs found -- agent will use sequential guessing{C.RESET}")
     return ctx
 
 
-# ── HTTP probe ────────────────────────────────────────────────────
+# -- HTTP probe ----------------------------------------------------
 def probe(
     method: str,
     url: str,
@@ -260,7 +268,7 @@ def probe(
 
         sc = C.GREEN if r.status_code<300 else C.YELLOW if r.status_code<400 else C.DIM
         id_tag = f"{C.CYAN}[{label}]{C.RESET} " if label != "attacker" else ""
-        sig    = f" {C.YELLOW}⚑ {'|'.join(sigs)}{C.RESET}" if sigs else ""
+        sig    = f" {C.YELLOW}{FLAG} {' '.join(sigs)}{C.RESET}" if sigs else ""
         print(f"  {C.DIM}[{oid}]{C.RESET} {id_tag}{method:6} {url[:65]} {sc}{r.status_code}{C.RESET}{sig}")
 
         return {"op_id":oid,"method":method,"url":url,"identity":label,
@@ -279,20 +287,20 @@ def report_finding(title,severity,owasp,description,op_ids,remediation):
          "evidence":{k:operations.get(k) for k in op_ids if k in operations}}
     findings.append(f)
     col = _sc(severity)
-    print(f"\n  {col}🚨 [{severity}] {title}{C.RESET}")
+    print(f"\n  {col}{BULLET} [{severity}] {title}{C.RESET}")
     print(f"     {C.DIM}{owasp}{C.RESET}")
     print(f"     {description[:140]}")
     print(f"     Proof: {', '.join(op_ids)}\n")
 
 
-# ── Claude agent tools schema ─────────────────────────────────────
+# -- Claude agent tools schema -------------------------------------
 TOOLS = [
     {
         "name": "probe",
         "description": (
             "Send one HTTP request. identity = 'attacker' | 'victim' | 'none'. "
             "Auth (cookies, tokens, headers) is handled automatically per identity. "
-            "Test each endpoint at least 3 ways: none → attacker → IDOR with victim IDs."
+            "Test each endpoint at least 3 ways: none -> attacker -> IDOR with victim IDs."
         ),
         "input_schema": {
             "type":"object",
@@ -310,7 +318,7 @@ TOOLS = [
         "name": "report_finding",
         "description": (
             "Report a CONFIRMED vulnerability. "
-            "Requires real proof — a 200 with another user's data, auth bypass, "
+            "Requires real proof -- a 200 with another user's data, auth bypass, "
             "stack trace, or clear misconfiguration. "
             "Never report 401/403/404 or speculation."
         ),
@@ -353,27 +361,32 @@ into the context below. Read them. Apply those techniques during testing.
 
 ## OWASP API Top 10 Protocol
 
-API1  BOLA — Probe as victim → confirm 200 → replay as attacker with same ID. 200 = confirmed BOLA.
-API2  Auth  — Probe with no auth. Try /login with no password, empty string, SQL chars.
-API3  Mass Assignment — Add "role":"admin","isAdmin":true to every POST/PUT body.
-API4  Consumption — No pagination on list endpoints? Huge response? Note it.
-API5  Function Auth — Try /admin/* endpoints as attacker (non-admin).
-API6  Business Logic — Try skipping workflow steps, bulk deletes, replaying tokens.
-API7  SSRF — Any URL field? Point it at http://169.254.169.254/
-API8  Misconfig — Debug endpoints, CORS *, stack traces, server banners, .NET System. errors.
-API9  Inventory — Old /v1/ still alive? Docs publicly exposed?
-API10 Unsafe Consumption — Inject payloads in fields passed to third parties.
+API1  BOLA -- Probe as victim -> confirm 200 -> replay as attacker with same ID. 200 = confirmed BOLA.
+API2  Auth  -- Probe with no auth. Try /login with no password, empty string, SQL chars.
+API3  Mass Assignment -- Add "role":"admin","isAdmin":true to every POST/PUT body.
+API4  Consumption -- No pagination on list endpoints? Huge response? Note it.
+API5  Function Auth -- Try /admin/* endpoints as attacker (non-admin).
+API6  Business Logic -- Try skipping workflow steps, bulk deletes, replaying tokens.
+API7  SSRF -- Any URL field? Point it at http://169.254.169.254/
+API8  Misconfig -- Debug endpoints, CORS *, stack traces, server banners, .NET System. errors.
+API9  Inventory -- Old /v1/ still alive? Docs publicly exposed?
+API10 Unsafe Consumption -- Inject payloads in fields passed to third parties.
 
 ## Severity
-CRITICAL — Account takeover, mass data dump, RCE
-HIGH     — IDOR with another user's PII, auth bypass
-MEDIUM   — Sensitive fields, rate limiting bypassed
-LOW      — Server banner, verbose error, CORS on non-sensitive endpoint
-INFO     — Docs exposed, old version alive
+CRITICAL -- Account takeover, mass data dump, RCE
+HIGH     -- IDOR with another user's PII, auth bypass
+MEDIUM   -- Sensitive fields, rate limiting bypassed
+LOW      -- Server banner, verbose error, CORS on non-sensitive endpoint
+INFO     -- Docs exposed, old version alive
 
 ## Rules
 REPORT:  200 + other user's data | unauth 200 + data | admin accessible | stack trace in response
 DO NOT:  401/403/404 | 500 alone | speculation | existence enumeration alone
+
+## Suggest Next Steps
+In testing_complete, include a "Suggested Next Steps" section in the summary.
+Be specific and actionable: e.g. "Try X on endpoint Y", "Use this exposed key against /api/v2/accounts",
+"Test mutation createUser with admin: true", "Scan subdomain admin.target.com with run.py".
 
 Call testing_complete when ALL endpoints have been tested."""
 
@@ -385,19 +398,56 @@ def run(
     victim      : Optional[Identity],
     victim_ctx  : dict,
     provider    : str = "groq",
+    recon_report: Optional[dict] = None,
 ):
     """Run the agent loop using the specified LLM provider."""
     llm = LLM(provider=provider)
-    print(f"\n{C.BOLD}[AGENT]{C.RESET} Starting with {provider.upper()} — {len(eps)} endpoints\n")
+    print(f"\n{C.BOLD}[AGENT]{C.RESET} Starting with {provider.upper()} -- {len(eps)} endpoints\n")
 
     # Pull knowledge base context
     auth_type = attacker.auth_type if attacker else "none"
     kb = context_for_scan(urlparse(base_url).netloc, auth_type)
     if kb:
         n = kb.count("###")
-        print(f"  {C.CYAN}→ {n} knowledge chunks loaded{C.RESET}")
+        print(f"  {C.CYAN}-> {n} knowledge chunks loaded{C.RESET}")
     else:
-        print(f"  {C.DIM}Knowledge base empty — add resources with: python3 run.py learn URL{C.RESET}")
+        print(f"  {C.DIM}Knowledge base empty -- add resources with: python3 run.py learn URL{C.RESET}")
+
+    # Recon context
+    recon_lines = ""
+    gql_context_str = ""
+    if recon_report:
+        parts = []
+        if recon_report.get("tech_stack"):
+            parts.append(f"Tech Stack: {', '.join(recon_report['tech_stack'])}")
+        if recon_report.get("forms"):
+            parts.append(f"Forms: {len(recon_report['forms'])} endpoints accepting user input")
+        if recon_report.get("supply_chain"):
+            services = [s["service"] for s in recon_report["supply_chain"][:10]]
+            parts.append(f"Third-party services: {', '.join(services)}")
+        if recon_report.get("missing_headers"):
+            missing = [h["header"] for h in recon_report["missing_headers"]]
+            parts.append(f"Missing security headers: {', '.join(missing)}")
+        if recon_report.get("data_leaks"):
+            leak_types = set(l["type"] for l in recon_report["data_leaks"])
+            parts.append(f"Potential data leaks: {', '.join(leak_types)}")
+        if recon_report.get("cors_issues"):
+            parts.append(f"CORS Misconfigs: {len(recon_report['cors_issues'])} endpoints with wildcard/null origin")
+        if recon_report.get("wayback_urls"):
+            parts.append(f"Historical endpoints: {len(recon_report['wayback_urls'])} from Wayback Machine")
+        if recon_report.get("sitemap_urls"):
+            parts.append(f"Sitemap entries: {len(recon_report['sitemap_urls'])}")
+        if recon_report.get("graphql") and recon_report["graphql"].get("is_graphql"):
+            gql = recon_report["graphql"]
+            parts.append("GraphQL endpoint detected")
+            if gql.get("introspection"):
+                parts.append("GraphQL introspection is OPEN (full schema exposed)")
+            if gql.get("schema"):
+                gql_context_str = format_schema_context(gql["schema"])
+                parts.append(f"GraphQL schema has {len(gql['schema'].get('queries',[]))} queries, "
+                             f"{len(gql['schema'].get('mutations',[]))} mutations")
+        if parts:
+            recon_lines = "## Reconnaissance Results\n" + "\n".join(f"- {p}" for p in parts)
 
     ep_list   = "\n".join(f"- [{e['method']}] {e['url']} [{e['source']}]" for e in eps)
     idor_list = "\n".join(_idor_variants(eps))
@@ -410,11 +460,15 @@ def run(
     if victim and victim.is_authenticated():
         auth_lines.append(f"VICTIM:   {victim.auth_type}")
     else:
-        auth_lines.append("VICTIM:   none — use sequential ID guessing")
+        auth_lines.append("VICTIM:   none -- use sequential ID guessing")
 
     victim_ids = ""
     if victim_ctx.get("victim_ids"):
         victim_ids = "\nKnown victim IDs:\n" + json.dumps(victim_ctx["victim_ids"], indent=2)
+
+    gql_guide = ""
+    if gql_context_str:
+        gql_guide = gql_context_str + "\n\n" + gql_attack_guide() + "\n"
 
     user_msg = f"""Target: {base_url}
 
@@ -424,6 +478,8 @@ Auth:
 
 {"## Knowledge Base Context" + chr(10) + kb if kb else ""}
 
+{recon_lines + chr(10) if recon_lines else ""}
+{gql_guide}
 ## Endpoints ({len(eps)}):
 {ep_list}
 
@@ -443,7 +499,7 @@ Begin. Test every endpoint."""
         if resp.text.strip():
             print(f"\n{C.DIM}[Agent] {resp.text[:160]}{C.RESET}")
 
-        # No tool calls — model is done
+        # No tool calls -- model is done
         if not resp.tool_calls:
             break
 
