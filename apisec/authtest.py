@@ -763,7 +763,7 @@ def path_bruteforce(
             try:
                 r = client.request(method, full_url, headers=auth_headers,
                                   cookies=auth_cookies, timeout=5)
-                if r.status_code not in (404, 410, 403, 401, 400) and r.status_code < 500:
+                if r.status_code not in (404, 410, 403, 401, 400, 204) and r.status_code < 500:
                     discovered.append({
                         "path": path,
                         "method": method,
