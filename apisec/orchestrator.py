@@ -128,7 +128,11 @@ class SubAgent:
         if mem_context:
             full_system += "\n\n" + mem_context
 
-        resp = self.llm.send(system=full_system, user_msg=user_msg, tools=tools)
+        try:
+            resp = self.llm.send(system=full_system, user_msg=user_msg, tools=tools)
+        except Exception as e:
+            print(f"  {C.YELLOW}  LLM agent skipped: {e}{C.RESET}")
+            return local_findings
 
         done, iters = False, 0
         while not done and iters < max_iters:
@@ -172,7 +176,11 @@ class SubAgent:
                     })
 
             if tool_results and not done:
-                resp = self.llm.reply(system=full_system, tool_results=tool_results, tools=tools)
+                try:
+                    resp = self.llm.reply(system=full_system, tool_results=tool_results, tools=tools)
+                except Exception as e:
+                    print(f"  {C.YELLOW}  LLM reply error: {e}{C.RESET}")
+                    break
 
         self.findings = local_findings
         return local_findings

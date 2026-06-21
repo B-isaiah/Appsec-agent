@@ -559,11 +559,13 @@ Begin. Test every endpoint."""
             wordlist=wordlist,
         )
 
-        if not auth_only:
-            # API scanning sub-agent
-            api_findings = orch.run_api_agent(eps, recon_report, victim_ctx)
+        try:
+            if not auth_only:
+                api_findings = orch.run_api_agent(eps, recon_report, victim_ctx)
+        except Exception as e:
+            print(f"  {C.YELLOW}{WARN} API sub-agent skipped: {e}{C.RESET}")
 
-        # Auth testing sub-agent (always runs if we have auth headers or cookies)
+        # Auth testing sub-agent (always runs — Python-based, no LLM needed)
         auth_headers = {}
         auth_cookies = {}
         if attacker and attacker.is_authenticated():
@@ -573,9 +575,15 @@ Begin. Test every endpoint."""
             auth_headers.update(victim.headers)
             auth_cookies.update(victim.cookies)
 
-        if auth_headers or auth_cookies or auth_only:
-            auth_findings = orch.run_auth_agent(auth_headers, auth_cookies)
-            findings.extend(auth_findings)
+        try:
+            if auth_headers or auth_cookies or auth_only:
+                auth_findings = orch.run_auth_agent(auth_headers, auth_cookies)
+                findings.extend(auth_findings)
+        except Exception as e:
+            print(f"  {C.YELLOW}{WARN} Auth sub-agent skipped: {e}{C.RESET}")
 
         if len(findings) > 0:
-            orch.report_summary()
+            try:
+                orch.report_summary()
+            except Exception:
+                pass
