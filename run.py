@@ -267,11 +267,19 @@ def _print_report(base_url, findings, operations, total_ops, recon_report=None):
             col = _sev(sev)
             print(f"{col}  -- {sev} ({len(bucket)}) --{RS}")
             for f in bucket:
-                print(f"  {col}*{RS} {f['title']}")
-                print(f"    {D}{f['owasp']}{RS}")
-                print(f"    {f['description'][:120]}")
-                print(f"    Fix: {f['remediation'][:100]}")
-                print(f"    Proof ops: {', '.join(f['op_ids'])}")
+                title = f.get("title") or f.get("finding", "?")
+                print(f"  {col}*{RS} {title}")
+                owasp = f.get("owasp", f.get("owasp_category", ""))
+                if owasp:
+                    print(f"    {D}{owasp}{RS}")
+                desc = f.get("description") or f.get("detail", "")
+                print(f"    {desc[:120]}")
+                fix = f.get("remediation") or f.get("fix", "")
+                if fix:
+                    print(f"    Fix: {fix[:100]}")
+                ops = f.get("op_ids", [])
+                if ops:
+                    print(f"    Proof ops: {', '.join(ops)}")
                 print()
 
     _print_recommendations(findings, recon_report)
