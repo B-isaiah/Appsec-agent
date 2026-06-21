@@ -255,10 +255,181 @@ class _GroqBackend:
         ]
 
 
+# -- Provider: DeepSeek (OpenAI-compatible via httpx) -----------------
+class _DeepSeekBackend:
+    BASE = "https://api.deepseek.com/v1"
+    MODELS = {
+        "deepseek-chat":   "deepseek-chat",
+        "deepseek-reasoner": "deepseek-reasoner",
+        "deepseek-v4-pro":  "deepseek-v4-pro",
+        "deepseek-v4-flash": "deepseek-v4-flash",
+    }
+
+    def __init__(self, model: str = "deepseek-v4-flash"):
+        self.model = self.MODELS.get(model, model)
+        key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        if not key:
+            raise RuntimeError(
+                "DEEPSEEK_API_KEY not set.\n"
+                "Run: export DEEPSEEK_API_KEY=sk-YOUR_KEY"
+            )
+        self.api_key = key
+        self.client = httpx.Client(base_url=self.BASE, timeout=60)
+
+    def _convert_tools(self, tools: list) -> list:
+        converted = []
+        for t in tools:
+            converted.append({
+                "type": "function",
+                "function": {
+                    "name":        t["name"],
+                    "description": t.get("description", ""),
+                    "parameters":  t.get("input_schema", {"type": "object", "properties": {}}),
+                }
+            })
+        return converted
+
+    def _convert_messages(self, messages: list) -> list:
+        out = []
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+
+            if isinstance(content, list):
+                if role == "user" and all(
+                    isinstance(b, dict) and b.get("type") == "tool_result"
+                    for b in content
+                ):
+                    for block in content:
+                        out.append({
+                            "role": "tool",
+                            "tool_call_id": block["tool_use_id"],
+                            "content": block["content"],
+                        })
+                    continue
+
+                text_parts = []
+                tool_calls = []
+                for block in content:
+                    if hasattr(block, "type"):
+                        if block.type == "text":
+                            text_parts.append(block.text)
+                        elif block.type == "tool_use":
+                            tool_calls.append({
+                                "id":   block.id,
+                                "type": "function",
+                                "function": {
+                                    "name":      block.name,
+                                    "arguments": json.dumps(block.input),
+                                }
+                            })
+                    elif isinstance(block, dict):
+                        if block.get("type") == "text":
+                            text_parts.append(block.get("text", ""))
+                        elif block.get("type") == "tool_use":
+                            tool_calls.append({
+                                "id":   block["id"],
+                                "type": "function",
+                                "function": {
+                                    "name":      block["name"],
+                                    "arguments": json.dumps(block.get("input", {})),
+                                }
+                            })
+
+                groq_msg = {"role": role, "content": " ".join(text_parts) or None}
+                if tool_calls:
+                    groq_msg["tool_calls"] = tool_calls
+                out.append(groq_msg)
+            else:
+                entry = {"role": role, "content": content}
+                if msg.get("tool_calls"):
+                    entry["tool_calls"] = msg["tool_calls"]
+                if msg.get("tool_call_id"):
+                    entry["tool_call_id"] = msg["tool_call_id"]
+                out.append(entry)
+
+        return out
+
+    def chat(self, system: str, messages: list, tools: list) -> LLMResponse:
+        ds_messages = [{"role": "system", "content": system}] + self._convert_messages(messages)
+        ds_tools = self._convert_tools(tools) if tools else None
+
+        body = {
+            "model": self.model,
+            "messages": ds_messages,
+            "max_tokens": 4096,
+        }
+        if ds_tools:
+            body["tools"] = ds_tools
+            body["tool_choice"] = "auto"
+
+        try:
+            r = self.client.post(
+                "/chat/completions",
+                json=body,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            if r.status_code != 200:
+                return LLMResponse(
+                    text=f"API error: HTTP {r.status_code} - {r.text[:200]}",
+                    tool_calls=[], done=True, raw=r.json()
+                )
+            data = r.json()
+        except Exception as e:
+            return LLMResponse(
+                text=f"Request failed: {e}",
+                tool_calls=[], done=True, raw=None
+            )
+
+        choice = data["choices"][0]
+        msg = choice["message"]
+        text = msg.get("content") or ""
+        tool_calls = []
+
+        if msg.get("tool_calls"):
+            for tc in msg["tool_calls"]:
+                try:
+                    args = json.loads(tc["function"]["arguments"])
+                except Exception:
+                    args = {}
+                tool_calls.append({
+                    "name":  tc["function"]["name"],
+                    "id":    tc["id"],
+                    "input": args,
+                })
+
+        done = not tool_calls and choice.get("finish_reason") in ("stop", "end_turn")
+        return LLMResponse(text=text, tool_calls=tool_calls, done=done, raw=data)
+
+    def build_assistant_msg(self, resp: LLMResponse):
+        if not resp.raw:
+            return {"role": "assistant", "content": resp.text}
+        choice = resp.raw["choices"][0]
+        msg = choice["message"]
+        assistant = {"role": "assistant", "content": msg.get("content") or ""}
+        if msg.get("tool_calls"):
+            assistant["tool_calls"] = msg["tool_calls"]
+        return assistant
+
+    def build_tool_result_msg(self, tool_results: list):
+        return [
+            {
+                "role": "tool",
+                "tool_call_id": r["tool_use_id"],
+                "content": r["content"],
+            }
+            for r in tool_results
+        ]
+
+
 # -- Public LLM class ----------------------------------------------
 PROVIDERS = {
-    "claude": _ClaudeBackend,
-    "groq":   _GroqBackend,
+    "claude":   _ClaudeBackend,
+    "groq":     _GroqBackend,
+    "deepseek": _DeepSeekBackend,
 }
 
 class LLM:

@@ -1,6 +1,6 @@
-# APISec — OWASP API Top 10 Agent
+# APISec — OWASP API Top 10 Agent + Hackbot
 
-An AI-powered autonomous API security scanner. Discovers endpoints, dumps GraphQL schemas, checks 30+ leak patterns, runs 9 external recon tools, then deploys an LLM agent (Groq/Claude) to probe for OWASP API Top 10 vulnerabilities.
+An AI-powered autonomous API security scanner with a sub-agent hackbot architecture. Discovers endpoints, dumps GraphQL schemas, checks 30+ leak patterns, runs 9 external recon tools, then deploys an LLM agent (Groq/Claude/DeepSeek) to probe for OWASP API Top 10 vulnerabilities. Also includes a dedicated **auth testing sub-agent** that tests JWT, MFA, password reset flows, session management, default credentials, rate limiting, BreachCollection credential stuffing, and path brute-force.
 
 Gets smarter over time — feed it blog posts, YouTube videos, and writeups via `--learn-url`.
 
@@ -26,12 +26,37 @@ Gets smarter over time — feed it blog posts, YouTube videos, and writeups via 
 
 ### Agent Loop (LLM-powered)
 
-After recon, the agent (Groq by default, Claude optional) autonomously:
+After recon, the agent (Groq by default, Claude/DeepSeek optional) autonomously:
 
 - Probes every discovered endpoint 3 ways: **unauthenticated → attacker → victim (IDOR)**
 - Tests all OWASP API Top 10 categories via structured prompts
 - Reports confirmed vulnerabilities with full request/response evidence
 - Suggests next steps when fishy things are found
+
+### Sub-Agent Hackbot Architecture
+
+Orchestrates multiple specialized LLM sub-agents with persistent memory:
+
+| Sub-Agent | What It Tests |
+|-----------|---------------|
+| **API Scanner** | REST endpoints for OWASP API Top 10 |
+| **Auth Tester** | JWT (none alg, weak secrets, kid injection), MFA bypass, password reset flows, session management, default credentials, rate limiting, account lockout |
+
+Each sub-agent has its own context, tools, and SQLite-backed memory that persists across runs.
+
+### Auth Testing Module (Python-based, no LLM needed)
+
+Runs deterministically without API costs:
+
+- **JWT Analysis** — none algorithm, weak secret cracking (30+ common secrets), kid injection
+- **Default Credentials** — 30+ common username/password combinations against all login endpoints
+- **MFA Bypass** — direct post-auth navigation, trivial code acceptance, response manipulation
+- **Password Reset** — user enumeration, predictable token detection, rate limiting checks
+- **Session Management** — fixation testing, token leakage in URLs, weak entropy detection
+- **Brute-Force / Rate Limiting** — 20-attempt burst detection on login endpoints
+- **Account Lockout** — 15-attempt lockout trigger verification
+- **BreachCollection Credential Stuffing** — searches breach database by domain, tries stolen creds against all login endpoints
+- **Path Brute-Force** — multi-verb (GET/POST/PUT/OPTIONS) directory brute-force using Dirbuster wordlists
 
 ### GraphQL Attack Surface
 
@@ -81,6 +106,15 @@ export ANTHROPIC_API_KEY=sk-ant-your_key_here
 # Then pass --model claude on scan
 ```
 
+**DeepSeek (cheapest — ~1000x cheaper than Claude):**
+
+```bash
+export DEEPSEEK_API_KEY=sk-your_key_here
+# Then pass --model deepseek on scan
+```
+
+Get a key at https://platform.deepseek.com. Recommended for hackbot mode (sub-agents + auth testing) since it's dramatically cheaper while offering competitive intelligence.
+
 ### 3. Optional — External Tools (Kali/Linux)
 
 Tools auto-run during step 10 if found on PATH:
@@ -108,6 +142,14 @@ playwright install chromium
 ```
 
 Then use `--login` flag instead of Burp XML.
+
+### 5. Optional — BreachCollection API (Credential Stuffing)
+
+```bash
+export BREACHCOLLECTION_API_KEY=your_key_here
+```
+
+Get a key at https://breachcollection.com. Used by the auth sub-agent to find and test breached credentials.
 
 ### Windows Notes
 
@@ -142,6 +184,9 @@ Cookie: session=xyz"
 # Use Claude instead of Groq
 python3 run.py scan https://target.com --model claude
 
+# Use DeepSeek (cheapest — great for hackbot mode)
+python3 run.py scan https://target.com --model deepseek
+
 # Browser login (alternative to Burp XML)
 python3 run.py scan https://target.com \
   --login https://target.com/login \
@@ -160,6 +205,40 @@ python3 run.py scan https://target.com \
   --spec openapi.json \
   --model claude
 ```
+
+### Hackbot Mode
+
+The sub-agent hackbot architecture runs specialized agents after the main scan:
+
+```bash
+# Auth-only mode — skip API scanning, only test auth (JWT, MFA, cred stuffing, etc.)
+python3 run.py scan https://target.com \
+  --attacker-headers "Authorization: Bearer eyJ..." \
+  --auth-only --model deepseek --breach-key YOUR_KEY
+
+# Full hackbot — API scanning + auth testing with DeepSeek
+python3 run.py scan https://target.com \
+  --attacker-headers "Authorization: Bearer eyJ..." \
+  --model deepseek --breach-key YOUR_KEY --wordlist ./common.txt
+
+# Auth testing only, no LLM costs (Python-based tests only)
+python3 run.py scan https://target.com \
+  --attacker-headers "Authorization: Bearer eyJ..." \
+  --auth-only --model groq
+
+# Disable sub-agents (run only the main agent)
+python3 run.py scan https://target.com --no-sub-agents
+```
+
+### New Flags
+
+| Flag | Description |
+|------|-------------|
+| `--auth-only` | Skip API scanning, only run auth testing sub-agent |
+| `--no-sub-agents` | Disable sub-agent architecture (main agent only) |
+| `--breach-key` | BreachCollection API key for credential stuffing |
+| `--wordlist` | Path to wordlist for path brute-force attacks |
+| `--model deepseek` | Use DeepSeek provider (cheapest, best for hackbot) |
 
 ### Learn (Knowledge Base)
 
@@ -194,7 +273,8 @@ python3 run.py kb delete --id 3
 
 ### Production Considerations
 
-- **Groq free tier** hits 100K token/day limit mid-scan on medium targets — use `--model claude` for serious work
+- **Groq free tier** hits 100K token/day limit mid-scan on medium targets — use `--model claude` or `--model deepseek` for serious work
+- **DeepSeek** is ~1000x cheaper than Claude and recommended for hackbot sub-agents
 - **Do not** run against production without explicit approval (active scanning triggers WAFs/IDP)
 - Best for **bug bounty recon** after manual target scope review
 
@@ -210,7 +290,9 @@ run.py
          ├── apisec/graphql.py  Schema parser + attack guide
          ├── apisec/knowledge.py SQLite KB (persistent)
          ├── apisec/login.py    Playwright browser login
-         └── apisec/llm.py      Groq/Claude adapter
+         ├── apisec/llm.py      Groq/Claude/DeepSeek adapter
+         ├── apisec/authtest.py Auth testing module (JWT, MFA, cred stuffing, etc.)
+         └── apisec/orchestrator.py Sub-agent orchestrator with memory
   learn/kb → apisec/knowledge.py
 ```
 
@@ -220,11 +302,13 @@ run.py
 |------|---------|
 | `run.py` | Single entry point — scan, learn, kb subcommands |
 | `apisec/recon.py` | 10-phase reconnaissance + external tool integration |
-| `apisec/agent.py` | Agent loop — calls LLM, probes endpoints, reports findings |
+| `apisec/agent.py` | Main agent loop + sub-agent orchestrator integration |
+| `apisec/authtest.py` | Auth testing module — JWT, MFA bypass, password reset, session mgmt, default creds, rate limiting, BreachCollection stuffing, path brute-force |
+| `apisec/orchestrator.py` | Sub-agent architecture with SQLite-backed persistent memory |
 | `apisec/graphql.py` | GraphQL introspection, schema parser, fuzzing payloads |
 | `apisec/identity.py` | Auth extraction from Burp XML or manual headers |
 | `apisec/login.py` | Playwright browser login — alternative to Burp |
-| `apisec/llm.py` | Unified Groq/Claude adapter |
+| `apisec/llm.py` | Unified Groq/Claude/DeepSeek adapter |
 | `apisec/knowledge.py` | Persistent SQLite knowledge base |
 | `apisec/term.py` | Terminal-aware Unicode/ASCII symbols (cross-platform) |
 
@@ -247,6 +331,24 @@ Results print to terminal in real time with color-coded severity.
   > [SUGGESTIONS]
   > GraphQL introspection is open. Dump the full schema.
   > 2 subdomains found. Scan each with run.py.
+```
+
+Auth sub-agent output:
+
+```
+  [AUTH TESTING SUB-AGENT]
+  ============================================================
+  > Testing JWT...
+  v JWT decoded: alg=HS256, sub=user123
+  * [CRITICAL] JWT weak/cracked secret: secret
+  * [CRITICAL] JWT kid injection: Forged JWT with kid=../../../../etc/passwd accepted
+
+  [DEFAULT CREDENTIALS]
+  * [CRITICAL] admin:admin -> /admin/login [HTTP 200]
+
+  [BREACHCOLLECTION CREDENTIAL STUFFING]
+  v 12 credential pairs found
+  * [CRITICAL] user@target.com:pass123 -> /api/v1/auth/login [HTTP 200]
 ```
 
 Full evidence (every request + response) saved to `findings.json`. Each finding links to `op_ids` for manual verification before reporting.

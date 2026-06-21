@@ -14,11 +14,12 @@ from xml.etree import ElementTree as ET
 import httpx
 from bs4 import BeautifulSoup
 
-from .graphql   import format_schema_context, attack_guide as gql_attack_guide
-from .identity  import Identity
-from .knowledge import context_for_scan
-from .llm       import LLM
-from .term      import CHECK, CROSS, FLAG, ARROW, BULLET
+from .graphql      import format_schema_context, attack_guide as gql_attack_guide
+from .identity     import Identity
+from .knowledge    import context_for_scan
+from .llm          import LLM
+from .term         import CHECK, CROSS, FLAG, ARROW, BULLET
+from .orchestrator import Orchestrator
 
 
 # -- Terminal colours ----------------------------------------------
@@ -399,6 +400,10 @@ def run(
     victim_ctx  : dict,
     provider    : str = "groq",
     recon_report: Optional[dict] = None,
+    auth_only   : bool = False,
+    breach_key  : str = "",
+    wordlist    : str = "",
+    sub_agents  : bool = True,
 ):
     """Run the agent loop using the specified LLM provider."""
     llm = LLM(provider=provider)
@@ -541,3 +546,36 @@ Begin. Test every endpoint."""
         elif tool_results and done:
             # Send final ack even when done so history is clean
             llm.reply(system=SYSTEM, tool_results=tool_results, tools=TOOLS)
+
+    # -- Sub-agent orchestration (runs after main agent loop) --
+    if sub_agents or auth_only:
+        print(f"\n{C.BOLD}[SUB-AGENT ORCHESTRATOR]{C.RESET} Starting specialized agents...")
+        orch = Orchestrator(
+            base_url=base_url,
+            provider=provider,
+            attacker=attacker,
+            victim=victim,
+            breach_api_key=breach_key,
+            wordlist=wordlist,
+        )
+
+        if not auth_only:
+            # API scanning sub-agent
+            api_findings = orch.run_api_agent(eps, recon_report, victim_ctx)
+
+        # Auth testing sub-agent (always runs if we have auth headers or cookies)
+        auth_headers = {}
+        auth_cookies = {}
+        if attacker and attacker.is_authenticated():
+            auth_headers.update(attacker.headers)
+            auth_cookies.update(attacker.cookies)
+        if victim and victim.is_authenticated():
+            auth_headers.update(victim.headers)
+            auth_cookies.update(victim.cookies)
+
+        if auth_headers or auth_cookies or auth_only:
+            auth_findings = orch.run_auth_agent(auth_headers, auth_cookies)
+            findings.extend(auth_findings)
+
+        if len(findings) > 0:
+            orch.report_summary()

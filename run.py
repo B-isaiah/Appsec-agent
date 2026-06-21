@@ -36,6 +36,16 @@ python3 run.py scan https://target.com \
   --victim-burp victim.xml \
   --spec openapi.json
 
+# HACKBOT MODE: Auth testing sub-agent (JWT, MFA, cred stuffing, etc.)
+python3 run.py scan https://target.com \
+  --attacker-headers "Authorization: Bearer eyJ..." \
+  --auth-only --model deepseek --breach-key YOUR_KEY
+
+# Full hackbot: API scanning + auth testing with DeepSeek
+python3 run.py scan https://target.com \
+  --attacker-headers "Authorization: Bearer eyJ..." \
+  --model deepseek --breach-key YOUR_KEY --wordlist ./common.txt
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 KNOWLEDGE BASE  (grows permanently, used in every scan)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -168,8 +178,11 @@ def cmd_scan(args):
 
     # Load knowledge base context + run agent with recon context
     print(f"\n{B}[KNOWLEDGE BASE]{RS}")
+    breach_key = args.breach_key or os.environ.get("BREACHCOLLECTION_API_KEY", "")
     agent.run(base_url, eps, attacker, victim, victim_ctx,
-              provider=args.model, recon_report=recon_report)
+              provider=args.model, recon_report=recon_report,
+              auth_only=args.auth_only, breach_key=breach_key,
+              wordlist=args.wordlist or "", sub_agents=not args.no_sub_agents)
 
     # Print final report
     _print_report(base_url, agent.findings, agent.operations, agent._op_n, recon_report)
@@ -399,9 +412,21 @@ def main():
     sc.add_argument("--login-user",   help="Username for browser login", default=None)
     sc.add_argument("--login-pass",   help="Password for browser login", default=None)
     sc.add_argument("--login-otp",    help="OTP/2FA code for browser login", default=None)
+    sc.add_argument("--auth-only",
+                    help="Skip API scanning, only run auth testing sub-agent",
+                    action="store_true", default=False)
+    sc.add_argument("--no-sub-agents",
+                    help="Disable sub-agent architecture (run only main agent)",
+                    action="store_true", default=False)
+    sc.add_argument("--breach-key",
+                    help="BreachCollection API key for credential stuffing",
+                    default=None)
+    sc.add_argument("--wordlist",
+                    help="Path to wordlist for path brute-force",
+                    default=None)
     sc.add_argument("--model",
-                    help="LLM provider to use (default: groq). Options: groq, claude",
-                    default="groq", choices=["groq","claude"])
+                    help="LLM provider (default: groq). Options: groq, claude, deepseek",
+                    default="groq", choices=["groq","claude","deepseek"])
 
     # -- learn --
     lc = sub.add_parser("learn", help="Add knowledge to the knowledge base")
