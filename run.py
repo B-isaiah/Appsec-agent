@@ -56,6 +56,11 @@ python3 run.py scan https://target.com \
   --attacker-headers "Authorization: Bearer eyJ..." \
   --model groq --exploit
 
+# Full scan with screenshots (requires: pip install playwright && playwright install chromium)
+python3 run.py scan https://target.com \
+  --attacker-headers "Authorization: Bearer eyJ..." \
+  --model groq --exploit --screenshots
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 KNOWLEDGE BASE  (grows permanently, used in every scan)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -181,6 +186,16 @@ def cmd_scan(args):
         print(f"{Y}No endpoints found. Try --burp or --spec.{RS}")
         sys.exit(0)
 
+    # Screenshot endpoints (recon phase)
+    screenshot_paths = []
+    if args.screenshots:
+        print(f"\n{B}[SCREENSHOTS]{RS}")
+        try:
+            from apisec.screenshot import capture_endpoints, capture_findings
+            screenshot_paths = capture_endpoints(eps)
+        except Exception as e:
+            print(f"  {Y}Screenshot error: {e}{RS}")
+
     # Harvest victim resource IDs for IDOR testing
     victim_ctx = {}
     if victim.is_authenticated():
@@ -244,6 +259,20 @@ def cmd_scan(args):
             raise
         if args.exploit:
             agent.findings.extend(exploit_findings)
+
+    # Screenshot findings
+    if args.screenshots and agent.findings:
+        try:
+            from apisec.screenshot import capture_findings as cf
+            finding_shots = cf(agent.findings, base_url)
+            screenshot_paths.extend(finding_shots)
+        except Exception as e:
+            print(f"  {Y}Screenshot error: {e}{RS}")
+
+    if screenshot_paths:
+        print(f"  {CY}Screenshots saved: {len(screenshot_paths)} files in screenshots/{RS}")
+        for sp in screenshot_paths[:5]:
+            print(f"    {D}• {sp}{RS}")
 
     # Print final report
     _print_report(base_url, agent.findings, agent.operations, agent._op_n, recon_report)
@@ -501,6 +530,9 @@ def main():
                     action="store_true", default=False)
     sc.add_argument("--exploit",
                     help="Run exploitation tests alongside main scan",
+                    action="store_true", default=False)
+    sc.add_argument("--screenshots",
+                    help="Take screenshots of endpoints and findings (requires playwright)",
                     action="store_true", default=False)
 
     # -- learn --
