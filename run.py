@@ -182,7 +182,7 @@ def cmd_scan(args):
 
     if args.auth_only:
         # Auth-only mode: skip main LLM agent, run auth sub-agent directly
-        print(f"{CY}  Auth-only mode -- running auth tester without LLM{C.RS}")
+        print(f"{CY}  Auth-only mode -- running auth tester without LLM{RS}")
         from apisec.orchestrator import Orchestrator
         auth_headers = {}
         auth_cookies = {}
