@@ -457,7 +457,8 @@ Begin. Test every endpoint."""
             print(f"\n{col}  -- {sev} ({len(bucket)}) --{C.RESET}")
             for f in bucket:
                 agent_tag = f"{C.DIM}[{f.get('agent','?')}]{C.RESET}" if f.get("agent") else ""
-                print(f"  {col}{BULLET}{C.RESET} {agent_tag} {f['title']}")
+                title = f.get('title') or f.get('finding', '?')
+                print(f"  {col}{BULLET}{C.RESET} {agent_tag} {title}")
                 print(f"    {C.DIM}{f.get('description','')[:120]}{C.RESET}")
                 if f.get("remediation"):
                     print(f"    Fix: {C.DIM}{f['remediation'][:100]}{C.RESET}")
@@ -475,11 +476,14 @@ Begin. Test every endpoint."""
             except (json.JSONDecodeError, FileNotFoundError):
                 pass
 
-            seen_titles = set(f["title"] for f in existing)
+            def _key(f):
+                return f.get("title") or f.get("finding") or ""
+            seen_titles = set(_key(f) for f in existing)
             for f in self.all_findings:
-                if f["title"] not in seen_titles:
+                k = _key(f)
+                if k and k not in seen_titles:
                     existing.append(f)
-                    seen_titles.add(f["title"])
+                    seen_titles.add(k)
 
             with open(path, "w") as f:
                 json.dump({"target": self.base_url, "findings": existing}, f, indent=2)
