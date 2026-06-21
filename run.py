@@ -46,6 +46,16 @@ python3 run.py scan https://target.com \
   --attacker-headers "Authorization: Bearer eyJ..." \
   --model deepseek --breach-key YOUR_KEY --wordlist ./common.txt
 
+# EXPLOIT MODE: SQLi, XSS, SSRF, IDOR, mass assignment (no LLM needed)
+python3 run.py scan https://target.com \
+  --attacker-headers "Authorization: Bearer eyJ..." \
+  --exploit-only
+
+# Exploitation alongside normal scan
+python3 run.py scan https://target.com \
+  --attacker-headers "Authorization: Bearer eyJ..." \
+  --model groq --exploit
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 KNOWLEDGE BASE  (grows permanently, used in every scan)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -180,7 +190,30 @@ def cmd_scan(args):
     print(f"\n{B}[KNOWLEDGE BASE]{RS}")
     breach_key = args.breach_key or os.environ.get("BREACHCOLLECTION_API_KEY", "")
 
-    if args.auth_only:
+    exploit_findings = []
+    if args.exploit_only or args.exploit:
+        mode = "exploit-only" if args.exploit_only else "exploit"
+        print(f"{CY}  {mode} mode -- running exploitation tests (SQLi, XSS, SSRF, ...){RS}")
+        from apisec.exploit import run_all as run_exploits
+        auth_headers = {}
+        auth_cookies = {}
+        victim_headers = {}
+        victim_cookies = {}
+        if attacker and attacker.is_authenticated():
+            auth_headers.update(attacker.headers)
+            auth_cookies.update(attacker.cookies)
+        if victim and victim.is_authenticated():
+            victim_headers.update(victim.headers)
+            victim_cookies.update(victim.cookies)
+        exploit_findings = run_exploits(
+            base_url=base_url, endpoints=eps,
+            attacker_headers=auth_headers, attacker_cookies=auth_cookies,
+            victim_headers=victim_headers, victim_cookies=victim_cookies,
+        )
+
+    if args.exploit_only:
+        agent.findings = exploit_findings
+    elif args.auth_only:
         # Auth-only mode: skip main LLM agent, run auth sub-agent directly
         print(f"{CY}  Auth-only mode -- running auth tester without LLM{RS}")
         from apisec.orchestrator import Orchestrator
@@ -209,6 +242,8 @@ def cmd_scan(args):
                 print(f"  Or use --auth-only to run auth tests without LLM")
                 sys.exit(1)
             raise
+        if args.exploit:
+            agent.findings.extend(exploit_findings)
 
     # Print final report
     _print_report(base_url, agent.findings, agent.operations, agent._op_n, recon_report)
@@ -453,6 +488,12 @@ def main():
     sc.add_argument("--model",
                     help="LLM provider (default: groq). Options: groq, claude, deepseek",
                     default="groq", choices=["groq","claude","deepseek"])
+    sc.add_argument("--exploit-only",
+                    help="Skip main agent, only run exploitation tests (SQLi, XSS, SSRF, etc.)",
+                    action="store_true", default=False)
+    sc.add_argument("--exploit",
+                    help="Run exploitation tests alongside main scan",
+                    action="store_true", default=False)
 
     # -- learn --
     lc = sub.add_parser("learn", help="Add knowledge to the knowledge base")
