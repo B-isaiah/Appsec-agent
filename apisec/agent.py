@@ -108,12 +108,12 @@ def collect_endpoints(
             for item in root.findall(".//item"):
                 try:
                     url_el = item.find("url")
-                    if not url_el or not url_el.text: continue
+                    if url_el is None or not url_el.text: continue
                     url = url_el.text.strip()
                     if bh and urlparse(url).netloc != bh: continue
                     req_el = item.find("request")
                     body, method = None, "GET"
-                    if req_el and req_el.text:
+                    if req_el is not None and req_el.text:
                         enc = req_el.get("base64","false") == "true"
                         raw = (base64.b64decode(req_el.text).decode("utf-8",errors="replace")
                                if enc else req_el.text)
