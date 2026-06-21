@@ -10,7 +10,10 @@ import hashlib
 from datetime import datetime
 from typing import Optional
 
-from .term import CHECK, CROSS, DIM
+from .term import CHECK, CROSS
+
+DIM = "\033[2m"
+RS = "\033[0m"
 
 SCREENSHOT_DIR = "screenshots"
 
@@ -39,7 +42,7 @@ def capture(
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        print(f"  {D}Install playwright: pip install playwright && playwright install chromium{D}")
+        print(f"  {DIM}Install playwright: pip install playwright && playwright install chromium{RS}")
         return None
 
     _ensure_dir()
@@ -72,7 +75,7 @@ def capture(
                 except Exception:
                     return None
     except Exception as e:
-        print(f"  {D}Screenshot error: {e}{D}")
+        print(f"  {DIM}Screenshot error: {e}{RS}")
         return None
 
 
@@ -89,7 +92,7 @@ def capture_endpoints(
             continue
         method = ep.get("method", "GET")
         path = ep.get("path", "/")
-        print(f"  {D}Screenshotting {method} {path}...{D}", end="", flush=True)
+        print(f"  {DIM}Screenshotting {method} {path}...{RS}", end="", flush=True)
         fp = capture(url, label=f"{method}_{path.strip('/')}")
         if fp:
             print(f" {CHECK}")
@@ -112,7 +115,7 @@ def capture_findings(
             continue
         seen.add(url)
         title = f.get("title") or f.get("finding", "finding")
-        print(f"  {D}Screenshotting finding: {title[:50]}...{D}", end="", flush=True)
+        print(f"  {DIM}Screenshotting finding: {title[:50]}...{RS}", end="", flush=True)
         fp = capture(url, label=f"finding_{title[:30]}")
         if fp:
             print(f" {CHECK}")
