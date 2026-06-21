@@ -95,8 +95,8 @@ def _youtube(url: str) -> tuple[str, str]:
             title = r.json().get("title", title)
     except Exception:
         pass
-    items = YouTubeTranscriptApi.get_transcript(vid)
-    text  = re.sub(r'\[.*?\]', '', " ".join(i["text"] for i in items))
+    items = YouTubeTranscriptApi().fetch(vid)
+    text  = re.sub(r'\[.*?\]', '', " ".join(i.text for i in items))
     return title, re.sub(r'\s+', ' ', text).strip()
 
 
