@@ -82,7 +82,7 @@ def _sev(s):
 
 def banner():
     print(f"{CY}{B}  APISec  --  OWASP API Top 10 Agent{RS}")
-    print(f"{D}  Bee / EdiongTechnologies{RS}\n")
+    print(f"{D}  Author:Ediongs Technologies{RS}\n")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
