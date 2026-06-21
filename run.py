@@ -179,10 +179,36 @@ def cmd_scan(args):
     # Load knowledge base context + run agent with recon context
     print(f"\n{B}[KNOWLEDGE BASE]{RS}")
     breach_key = args.breach_key or os.environ.get("BREACHCOLLECTION_API_KEY", "")
-    agent.run(base_url, eps, attacker, victim, victim_ctx,
-              provider=args.model, recon_report=recon_report,
-              auth_only=args.auth_only, breach_key=breach_key,
-              wordlist=args.wordlist or "", sub_agents=not args.no_sub_agents)
+
+    if args.auth_only:
+        # Auth-only mode: skip main LLM agent, run auth sub-agent directly
+        print(f"{CY}  Auth-only mode -- running auth tester without LLM{C.RS}")
+        from apisec.orchestrator import Orchestrator
+        auth_headers = {}
+        auth_cookies = {}
+        if attacker and attacker.is_authenticated():
+            auth_headers.update(attacker.headers)
+            auth_cookies.update(attacker.cookies)
+        orch = Orchestrator(base_url=base_url, provider=args.model,
+                            attacker=attacker, victim=victim,
+                            breach_api_key=breach_key,
+                            wordlist=args.wordlist or "")
+        orch.run_auth_agent(auth_headers, auth_cookies)
+        orch.report_summary()
+        agent.findings = orch.all_findings
+    else:
+        try:
+            agent.run(base_url, eps, attacker, victim, victim_ctx,
+                      provider=args.model, recon_report=recon_report,
+                      auth_only=False, breach_key=breach_key,
+                      wordlist=args.wordlist or "", sub_agents=not args.no_sub_agents)
+        except RuntimeError as e:
+            if "API_KEY" in str(e) or "api key" in str(e).lower():
+                print(f"{R}No LLM API key set.{RS}")
+                print(f"  Set GROQ_API_KEY, ANTHROPIC_API_KEY, or DEEPSEEK_API_KEY")
+                print(f"  Or use --auth-only to run auth tests without LLM")
+                sys.exit(1)
+            raise
 
     # Print final report
     _print_report(base_url, agent.findings, agent.operations, agent._op_n, recon_report)

@@ -377,35 +377,41 @@ Begin. Test every endpoint."""
         return findings
 
     def run_auth_agent(self, headers: dict, cookies: dict) -> list[dict]:
+        findings = []
         print(f"\n{C.BOLD}[SUB-AGENT] Auth Tester{C.RESET}")
 
-        agent = SubAgent("auth-tester", self.provider, _make_auth_agent_system(), self.domain)
-        user_msg = f"Run ALL auth tests against {self.base_url}. Auth headers: {list(headers.keys()) if headers else 'none'}, Cookies: {list(cookies.keys()) if cookies else 'none'}"
+        # Try LLM-based auth agent (may fail if no API key)
+        try:
+            agent = SubAgent("auth-tester", self.provider, _make_auth_agent_system(), self.domain)
+            user_msg = f"Run ALL auth tests against {self.base_url}. Auth headers: {list(headers.keys()) if headers else 'none'}, Cookies: {list(cookies.keys()) if cookies else 'none'}"
 
-        auth_tools = AGENT_TOOLS + [
-            {
-                "name": "run_auth_tests",
-                "description": "Run all auth tests (JWT, default creds, MFA bypass, password reset, session mgmt, rate limiting, account lockout). Optionally BreachCollection stuffing and path brute-force.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "jwt": {"type": "boolean", "description": "Test JWT tokens"},
-                        "default_creds": {"type": "boolean", "description": "Test default credentials"},
-                        "mfa_bypass": {"type": "boolean"},
-                        "password_reset": {"type": "boolean"},
-                        "session_mgmt": {"type": "boolean"},
-                        "rate_limiting": {"type": "boolean"},
-                        "breach_stuffing": {"type": "boolean", "description": "Credential stuffing via BreachCollection"},
-                        "path_bruteforce": {"type": "boolean", "description": "Brute-force admin paths"},
+            auth_tools = AGENT_TOOLS + [
+                {
+                    "name": "run_auth_tests",
+                    "description": "Run all auth tests (JWT, default creds, MFA bypass, password reset, session mgmt, rate limiting, account lockout). Optionally BreachCollection stuffing and path brute-force.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "jwt": {"type": "boolean", "description": "Test JWT tokens"},
+                            "default_creds": {"type": "boolean", "description": "Test default credentials"},
+                            "mfa_bypass": {"type": "boolean"},
+                            "password_reset": {"type": "boolean"},
+                            "session_mgmt": {"type": "boolean"},
+                            "rate_limiting": {"type": "boolean"},
+                            "breach_stuffing": {"type": "boolean", "description": "Credential stuffing via BreachCollection"},
+                            "path_bruteforce": {"type": "boolean", "description": "Brute-force admin paths"},
+                        },
+                        "required": ["jwt", "default_creds", "mfa_bypass", "password_reset", "session_mgmt", "rate_limiting"],
                     },
-                    "required": ["jwt", "default_creds", "mfa_bypass", "password_reset", "session_mgmt", "rate_limiting"],
                 },
-            },
-        ]
+            ]
 
-        findings = agent.run(user_msg, auth_tools)
+            llm_findings = agent.run(user_msg, auth_tools)
+            findings.extend(llm_findings)
+        except Exception as e:
+            print(f"  {C.DIM}LLM agent skipped ({e}){C.RESET}")
 
-        # Also run the Python auth tests directly (deterministic, no LLM cost)
+        # Always run the Python auth tests directly (deterministic, no LLM cost)
         print(f"\n  {C.CYAN}{ARROW} Running direct auth tests...{C.RESET}")
         try:
             with httpx.Client(timeout=10, follow_redirects=True, verify=False) as client:
